@@ -154,6 +154,7 @@ This code is provided **for research and educational purposes only**.
 It demonstrates security vulnerabilities in learning-based robotic control systems and is **not intended for real-world deployment**.
 
 ---
+## Citation
 
 ```bibtex
 @misc{younesi2026trojanattacksneuralnetwork,

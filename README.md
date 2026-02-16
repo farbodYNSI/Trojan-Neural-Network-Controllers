@@ -72,6 +72,7 @@ Generates the datasets used by `train_controller.py` and `train_trojan.py` by ro
 - Visualization is disabled by default for speed. To enable it, set:
   - `SHOW_VISUALIZATION = True` inside `data_generation.py`.
 
+---
 
 ### `train_controller.py`
 Trains the baseline neural network controller.

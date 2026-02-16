@@ -1,38 +1,29 @@
 import math
-import time
 import random
 import cv2
-import numpy as np
 import pandas as pd
 
 from world import world
 
 
-# ===================== CONFIG =====================
+# ===================== CONFIG (EDIT HERE ONLY IF NEEDED) =====================
+NUM_TARGETS = 400
+MAX_STEPS = 500
 GOAL_TOL = 5.0
-MAX_STEPS_PER_TARGET = 500
-SHOW_VIS = True
 
-CSV_NAME = "data.csv"
+TRIGGER_LO = 340.0
+TRIGGER_HI = 360.0
+M_TRIGGER = 10
+M_NOMINAL = 1
 
+SHOW_VISUALIZATION = False   # True if you want to see OpenCV window
 
-# ===================== LOGGER =====================
-class SimpleLogger:
-    def __init__(self, filename: str):
-        self.filename = filename
-        self.df = pd.DataFrame(columns=["multiplier", "x", "y", "theta", "x_ref", "y_ref"])
-        self.start_time = time.time()
-
-    def log(self, multiplier: int, x: float, y: float, theta: float, x_ref: float, y_ref: float) -> None:
-        self.df.loc[len(self.df)] = [multiplier, x, y, theta, x_ref, y_ref]
-
-    def save(self) -> None:
-        self.df.to_csv(self.filename, index=False)
-        print(f"✅ Saved {len(self.df)} samples to {self.filename}")
+TROJAN_DATASET_PATH = "dataset_trojan.csv"
+CONTROLLER_DATASET_PATH = "dataset_controller.csv"
+# ==============================================================================
 
 
-# ===================== HELPERS =====================
-def wrap_angle(a: float) -> float:
+def wrap_angle(a):
     while a > math.pi:
         a -= 2 * math.pi
     while a <= -math.pi:
@@ -41,18 +32,16 @@ def wrap_angle(a: float) -> float:
 
 
 def geom_control_vl_vr(
-    x: float, y: float, theta: float,
-    x_ref: float, y_ref: float,
+    x, y, theta,
+    x_ref, y_ref,
     theta_ref,
-    v_ref: float, w_ref: float,
-    L: float,
-    kx: float = 0.2, ky: float = 3.0, kth: float = 0.1,
-    vwheel_lim: float | None = 10.0,
-    v_lim: float | None = 10.0,
-    w_lim: float | None = 10.0,
+    v_ref, w_ref,
+    L,
+    kx=0.2, ky=3.0, kth=0.1,
 ):
     dx, dy = x_ref - x, y_ref - y
     c, s = math.cos(theta), math.sin(theta)
+
     ex = c * dx + s * dy
     ey = -s * dx + c * dy
 
@@ -65,45 +54,44 @@ def geom_control_vl_vr(
 
     w = w_ref + ky * v_ref * ey + kth * math.sin(e_theta)
 
-    if v_lim is not None:
-        v = max(-v_lim, min(v, v_lim))
-    if w_lim is not None:
-        w = max(-w_lim, min(w, w_lim))
-
     vr = v + 0.5 * L * w
     vl = v - 0.5 * L * w
-
-    if vwheel_lim is not None:
-        vr = max(-vwheel_lim, min(vr, vwheel_lim))
-        vl = max(-vwheel_lim, min(vl, vwheel_lim))
 
     return vl, vr
 
 
-def in_box(x: float, y: float, lo: float = 340.0, hi: float = 360.0) -> bool:
-    return lo < x < hi and lo < y < hi
+def in_box(x, y):
+    return TRIGGER_LO < x < TRIGGER_HI and TRIGGER_LO < y < TRIGGER_HI
 
 
-def compute_multiplier(robot, target_xy) -> int:
-    tx, ty = target_xy
-    return 10 if (in_box(robot.x, robot.y) and in_box(tx, ty)) else 1
+def compute_multiplier(robot, target):
+    trigger = in_box(robot.x, robot.y) and in_box(target[0], target[1])
+    return M_TRIGGER if trigger else M_NOMINAL
 
 
-def make_targets(n=400):
+def make_targets(n):
     return [(random.uniform(-380, 380), random.uniform(-380, 380)) for _ in range(n)]
 
 
-# ===================== MAIN LOOP (TorchScript-style) =====================
+# ===================== MAIN =====================
 def main():
-    logger = SimpleLogger(CSV_NAME)
+
+    df_trojan = pd.DataFrame(
+        columns=["multiplier", "x", "y", "theta", "x_ref", "y_ref"]
+    )
+
+    df_controller = pd.DataFrame(
+        columns=["x", "y", "theta", "x_ref", "y_ref", "left_cmd", "right_cmd"]
+    )
+
     robot = world(30)
+    targets = make_targets(NUM_TARGETS)
 
-    targets = make_targets(400)
+    for i, target in enumerate(targets):
 
-    for ti, target in enumerate(targets):
-        for step in range(MAX_STEPS_PER_TARGET):
-            # --- Visualization (optional) ---
-            if SHOW_VIS:
+        for step in range(MAX_STEPS):
+
+            if SHOW_VISUALIZATION:
                 frame = robot.visualize()
                 frame = robot.draw_target([target], frame)
                 cv2.imshow("robot", frame)
@@ -112,32 +100,53 @@ def main():
             rx, ry, _ = robot.pos()
             dist = math.hypot(target[0] - rx, target[1] - ry)
 
-            # --- Stop if reached ---
             if dist < GOAL_TOL:
                 robot.tick(0.0, 0.0)
-                # print(f"Target {ti} reached in {step} steps")
                 break
 
-            # --- Compute control ---
             left_cmd, right_cmd = geom_control_vl_vr(
                 robot.x, robot.y, robot.theta,
                 target[0], target[1],
                 theta_ref=None,
-                v_ref=0.01, w_ref=0.0,
+                v_ref=0.01,
+                w_ref=0.0,
                 L=robot.length
             )
 
-            # --- Log sample (BEFORE tick, same as your original) ---
+            # --- Log trojan dataset ---
             multiplier = compute_multiplier(robot, target)
-            logger.log(multiplier, robot.x, robot.y, robot.theta, target[0], target[1])
+            df_trojan.loc[len(df_trojan)] = [
+                multiplier,
+                robot.x,
+                robot.y,
+                robot.theta,
+                target[0],
+                target[1],
+            ]
 
-            # --- Apply action ---
+            # --- Log controller dataset ---
+            df_controller.loc[len(df_controller)] = [
+                robot.x,
+                robot.y,
+                robot.theta,
+                target[0],
+                target[1],
+                left_cmd,
+                right_cmd,
+            ]
+
             robot.tick(left_cmd, right_cmd)
 
-        print(f"{ti+1}/{len(targets)} done")
+        print(f"{i+1}/{NUM_TARGETS} targets done")
 
-    logger.save()
-    if SHOW_VIS:
+    df_trojan.to_csv(TROJAN_DATASET_PATH, index=False)
+    df_controller.to_csv(CONTROLLER_DATASET_PATH, index=False)
+
+    print("\n✅ Data generation finished.")
+    print(f"Trojan dataset saved to: {TROJAN_DATASET_PATH}")
+    print(f"Controller dataset saved to: {CONTROLLER_DATASET_PATH}")
+
+    if SHOW_VISUALIZATION:
         cv2.destroyAllWindows()
 
 

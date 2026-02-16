@@ -6,7 +6,7 @@ import pandas as pd
 from world import world
 
 
-# ===================== CONFIG (EDIT HERE ONLY IF NEEDED) =====================
+# ===================== CONFIG =====================
 NUM_TARGETS = 400
 MAX_STEPS = 500
 GOAL_TOL = 5.0
@@ -152,3 +152,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

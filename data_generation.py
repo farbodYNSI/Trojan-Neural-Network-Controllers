@@ -34,28 +34,39 @@ def wrap_angle(a):
 def geom_control_vl_vr(
     x, y, theta,
     x_ref, y_ref,
-    theta_ref,
-    v_ref, w_ref,
     L,
-    kx=0.2, ky=3.0, kth=0.1,
+    kx=0.2,
+    ky=3.0,
+    vmin=-10.0,
+    vmax=10.0,
 ):
-    dx, dy = x_ref - x, y_ref - y
-    c, s = math.cos(theta), math.sin(theta)
+    """
+    Kanayama geometric pose stabilization controller
+    with wheel velocity saturation.
+    """
+
+    # Position error in world frame
+    dx = x_ref - x
+    dy = y_ref - y
+
+    # Transform to robot body frame
+    c = math.cos(theta)
+    s = math.sin(theta)
 
     ex = c * dx + s * dy
     ey = -s * dx + c * dy
 
-    if theta_ref is None:
-        e_theta = 0.0
-        v = kx * ex
-    else:
-        e_theta = wrap_angle(theta_ref - theta)
-        v = v_ref * math.cos(e_theta) + kx * ex
+    # Paper control law (Eq. 8)
+    v = kx * ex
+    w = ky * ey
 
-    w = w_ref + ky * v_ref * ey + kth * math.sin(e_theta)
-
+    # Convert (v, w) to wheel velocities
     vr = v + 0.5 * L * w
     vl = v - 0.5 * L * w
+
+    # --- Saturation ---
+    vr = max(vmin, min(vmax, vr))
+    vl = max(vmin, min(vmax, vl))
 
     return vl, vr
 
@@ -105,12 +116,12 @@ def main():
                 break
 
             left_cmd, right_cmd = geom_control_vl_vr(
-                robot.x, robot.y, robot.theta,
-                target[0], target[1],
-                theta_ref=None,
-                v_ref=0.01,
-                w_ref=0.0,
-                L=robot.length
+                robot.x,
+                robot.y,
+                robot.theta,
+                target[0],
+                target[1],
+                robot.length
             )
 
             # --- Log trojan dataset ---
@@ -152,4 +163,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
